@@ -302,6 +302,93 @@ export class CodebaseIndexer {
         return chunks;
     }
 
+    /**
+     * Analyze project structure and generate a skill description.
+     * Returns markdown content suitable for project-skill.md.
+     */
+    analyzeProjectStructure(workspacePath: string): string {
+        const lines: string[] = [];
+        lines.push('# Project Structure');
+        lines.push('');
+
+        // Root files (package.json, Cargo.toml, go.mod, etc.)
+        const rootFiles = fs.readdirSync(workspacePath).filter(f =>
+            fs.statSync(path.join(workspacePath, f)).isFile()
+        );
+        if (rootFiles.length > 0) {
+            lines.push('## Root Files');
+            rootFiles.forEach(f => lines.push(`- ${f}`));
+            lines.push('');
+        }
+
+        // Directory tree (depth-limited)
+        const ignoreDirs = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.venv', '__pycache__', '.svn', 'target', 'bin', 'obj', '.next', '.nuxt', 'coverage']);
+        const maxDepth = 3;
+        lines.push('## Directory Structure');
+        lines.push('```');
+        this._walkTree(workspacePath, workspacePath, lines, ignoreDirs, 0, maxDepth);
+        lines.push('```');
+        lines.push('');
+
+        // Detect project type
+        lines.push('## Project Type');
+        const types: string[] = [];
+        if (fs.existsSync(path.join(workspacePath, 'package.json'))) { types.push('Node.js / TypeScript'); }
+        if (fs.existsSync(path.join(workspacePath, 'tsconfig.json'))) { types.push('TypeScript'); }
+        if (fs.existsSync(path.join(workspacePath, 'Cargo.toml'))) { types.push('Rust'); }
+        if (fs.existsSync(path.join(workspacePath, 'go.mod'))) { types.push('Go'); }
+        if (fs.existsSync(path.join(workspacePath, 'pyproject.toml')) || fs.existsSync(path.join(workspacePath, 'requirements.txt'))) { types.push('Python'); }
+        if (fs.existsSync(path.join(workspacePath, 'pom.xml')) || fs.existsSync(path.join(workspacePath, 'build.gradle'))) { types.push('Java'); }
+        if (fs.existsSync(path.join(workspacePath, 'CMakeLists.txt'))) { types.push('C/C++'); }
+        if (fs.existsSync(path.join(workspacePath, '.csproj'))) { types.push('C#'); }
+        lines.push(types.length > 0 ? types.join(', ') : 'Unknown');
+        lines.push('');
+
+        // Entry points detection
+        lines.push('## Entry Points');
+        const entries: string[] = [];
+        if (fs.existsSync(path.join(workspacePath, 'src', 'index.ts'))) { entries.push('src/index.ts'); }
+        if (fs.existsSync(path.join(workspacePath, 'src', 'main.ts'))) { entries.push('src/main.ts'); }
+        if (fs.existsSync(path.join(workspacePath, 'src', 'app.ts'))) { entries.push('src/app.ts'); }
+        if (fs.existsSync(path.join(workspacePath, 'src', 'main.py'))) { entries.push('src/main.py'); }
+        if (fs.existsSync(path.join(workspacePath, 'main.go'))) { entries.push('main.go'); }
+        if (fs.existsSync(path.join(workspacePath, 'src', 'main.rs'))) { entries.push('src/main.rs'); }
+        if (fs.existsSync(path.join(workspacePath, 'src', 'lib.rs'))) { entries.push('src/lib.rs'); }
+        if (fs.existsSync(path.join(workspacePath, 'src', 'extension.ts'))) { entries.push('src/extension.ts (VS Code Extension)'); }
+        if (entries.length === 0) { entries.push('(auto-detect failed, check root files)'); }
+        entries.forEach(e => lines.push(`- ${e}`));
+        lines.push('');
+
+        return lines.join('\n');
+    }
+
+    private _walkTree(basePath: string, currentPath: string, lines: string[], ignoreDirs: Set<string>, depth: number, maxDepth: number): void {
+        if (depth > maxDepth) { return; }
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        } catch { return; }
+
+        // Sort: directories first, then files
+        entries.sort((a, b) => {
+            if (a.isDirectory() && !b.isDirectory()) return -1;
+            if (!a.isDirectory() && b.isDirectory()) return 1;
+            return a.name.localeCompare(b.name);
+        });
+
+        const prefix = '  '.repeat(depth);
+        for (const entry of entries) {
+            if (ignoreDirs.has(entry.name) || entry.name.startsWith('.') && entry.name !== '.vscode') { continue; }
+            const rel = path.relative(basePath, path.join(currentPath, entry.name));
+            if (entry.isDirectory()) {
+                lines.push(`${prefix}📁 ${entry.name}/`);
+                this._walkTree(basePath, path.join(currentPath, entry.name), lines, ignoreDirs, depth + 1, maxDepth);
+            } else {
+                lines.push(`${prefix}📄 ${entry.name}`);
+            }
+        }
+    }
+
     private cosineSimilarity(a: number[], b: number[]): number {
         if (a.length !== b.length) {
             return 0;

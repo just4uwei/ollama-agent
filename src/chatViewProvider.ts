@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import { OllamaClient } from './ollamaClient';
 import { CodebaseIndexer } from './tools/codebaseTools';
 import { FileTools } from './tools/fileTools';
@@ -55,14 +55,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         private codebaseIndexer: CodebaseIndexer,
         model: string,
         availableModels: string[] = [],
-        visionModel: string = ''
+        visionModel: string = '',
+        private readonly _workspaceState?: vscode.Memento
     ) {
         this._currentModel = model;
         this._visionModel = visionModel;
         this._availableModels = availableModels.length > 0 ? availableModels : [model];
         this.fileTools = new FileTools();
         this.terminalTools = new TerminalTools();
-        this._createNewSession();
+        // Persist sessions across reloads via workspaceState
+        if (this._workspaceState) {
+            const saved = this._workspaceState.get<any>('sessions');
+            if (saved && Array.isArray(saved.sessions)) {
+                this._sessions = saved.sessions;
+                this._activeSessionId = saved.activeId || (this._sessions[0]?.id ?? '');
+            }
+        }
+        if (!this._activeSessionId) {
+            this._createNewSession();
+        }
     }
 
     public getCurrentModel(): string { return this._currentModel; }
@@ -89,6 +100,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         vscode.window.setStatusBarMessage(`📄 ${path.basename(filePath)} 已添加到 Ollama Agent`, 3000);
     }
 
+    /** Public wrapper for external callers (e.g. extension.ts) */
+    public getActiveSession(): ChatSession | undefined {
+        return this._getActiveSession();
+    }
+
+    /** Handle messages forwarded from ChatPanel */
+    public async handlePanelMessage(data: any): Promise<void> {
+        await this._handleWebviewMessage(data);
+    }
+
     private _createNewSession(): ChatSession {
         const session: ChatSession = {
             id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -102,6 +123,79 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     private _getActiveSession(): ChatSession | undefined {
         return this._sessions.find(s => s.id === this._activeSessionId);
+    }
+
+    private async _handleWebviewMessage(data: any): Promise<void> {
+        switch (data.type) {
+            case 'sendMessage':
+                if (this._isProcessing) {
+                    this._view?.webview.postMessage({ type: 'addError', error: '正在处理中，请等待完成...' });
+                    return;
+                }
+                await this.handleUserMessage(data.message, data.files, data.images);
+                break;
+            case 'stop':
+                this._doStop();
+                break;
+            case 'clearHistory':
+                this._clearCurrentSession();
+                break;
+            case 'indexProject':
+                await this.indexProject();
+                break;
+            case 'switchModel':
+                vscode.commands.executeCommand('ollamaAgent.switchModel');
+                break;
+            case 'selectModel':
+                this._currentModel = data.model;
+                this._view?.webview.postMessage({ type: 'configChanged', textModel: data.model, visionModel: this._visionModel });
+                break;
+            case 'configureModels':
+                vscode.commands.executeCommand('ollamaAgent.configureModels');
+                break;
+            case 'restartOllama':
+                vscode.commands.executeCommand('ollamaAgent.restartOllama');
+                break;
+            case 'ollamaRestarted':
+                this._view?.webview.postMessage({ type: 'ollamaRestarted', models: data.models || [] });
+                break;
+            case 'ollamaRestartFailed':
+                this._view?.webview.postMessage({ type: 'ollamaRestartFailed' });
+                break;
+            case 'newChat':
+                this._createNewSession();
+                this._view?.webview.postMessage({ type: 'sessionReset', sessionId: this._activeSessionId });
+                break;
+            case 'switchSession':
+                this._activeSessionId = data.sessionId;
+                this._saveSessionsToFile();
+                this._view?.webview.postMessage({ type: 'sessionLoaded', session: this._getActiveSession() });
+                break;
+            case 'deleteSession':
+                this._sessions = this._sessions.filter(s => s.id !== data.sessionId);
+                this._saveSessionsToFile();
+                if (this._activeSessionId === data.sessionId) {
+                    this._createNewSession();
+                    this._view?.webview.postMessage({ type: 'sessionReset', sessionId: this._activeSessionId });
+                }
+                this._view?.webview.postMessage({ type: 'sessionList', sessions: this._sessions.map(s => ({ id: s.id, title: s.title })) });
+                break;
+            case 'requestSessionList':
+                this._view?.webview.postMessage({ type: 'sessionList', sessions: this._sessions.map(s => ({ id: s.id, title: s.title })) });
+                break;
+            case 'readFile':
+                try { this._view?.webview.postMessage({ type: 'fileContent', path: data.path, name: path.basename(data.path), content: fs.readFileSync(data.path, 'utf-8').slice(0, 50000) }); } catch (e: any) { this._view?.webview.postMessage({ type: 'addError', error: `读取失败: ${e.message}` }); }
+                break;
+        }
+    }
+
+    private _saveSessionsToFile(): void {
+        try {
+            this._workspaceState?.update('sessions', {
+                sessions: this._sessions,
+                activeId: this._activeSessionId
+            });
+        } catch { /* ignore */ }
     }
 
     public resolveWebviewView(
@@ -119,62 +213,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         webviewView.webview.onDidReceiveMessage(async (data) => {
-            switch (data.type) {
-                case 'sendMessage':
-                    if (this._isProcessing) {
-                        this._view?.webview.postMessage({ type: 'addError', error: '正在处理中，请等待完成...' });
-                        return;
-                    }
-                    await this.handleUserMessage(data.message, data.files, data.images);
-                    break;
-                case 'stop':
-                    this._doStop();
-                    break;
-                case 'clearHistory':
-                    this._clearCurrentSession();
-                    break;
-                case 'indexProject':
-                    await this.indexProject();
-                    break;
-                case 'switchModel':
-                    vscode.commands.executeCommand('ollamaAgent.switchModel');
-                    break;
-                case 'selectModel':
-                    this._currentModel = data.model;
-                    this._view?.webview.postMessage({ type: 'configChanged', textModel: data.model, visionModel: this._visionModel });
-                    break;
-                case 'configureModels':
-                    vscode.commands.executeCommand('ollamaAgent.configureModels');
-                    break;
-                case 'newChat':
-                    this._createNewSession();
-                    this._view?.webview.postMessage({ type: 'sessionReset', sessionId: this._activeSessionId });
-                    break;
-                case 'switchSession':
-                    this._activeSessionId = data.sessionId;
-                    this._view?.webview.postMessage({ type: 'sessionLoaded', session: this._getActiveSession() });
-                    break;
-                case 'deleteSession':
-                    this._sessions = this._sessions.filter(s => s.id !== data.sessionId);
-                    if (this._activeSessionId === data.sessionId) {
-                        if (this._sessions.length === 0) { this._createNewSession(); }
-                        else { this._activeSessionId = this._sessions[0].id; }
-                    }
-                    this._view?.webview.postMessage({ type: 'sessionList', sessions: this._sessions.map(s => ({ id: s.id, title: s.title })) });
-                    break;
-                case 'requestSessionList':
-                    this._view?.webview.postMessage({ type: 'sessionList', sessions: this._sessions.map(s => ({ id: s.id, title: s.title })) });
-                    break;
-                case 'readFile': {
-                    try {
-                        const content = fs.readFileSync(data.path, 'utf-8');
-                        this._view?.webview.postMessage({ type: 'fileContent', path: data.path, name: path.basename(data.path), content: content.slice(0, 50000) });
-                    } catch (e: any) {
-                        this._view?.webview.postMessage({ type: 'addError', error: `读取文件失败: ${e.message}` });
-                    }
-                    break;
-                }
-            }
+            await this._handleWebviewMessage(data);
         });
     }
 
@@ -469,6 +508,18 @@ handoff 场景：
 
 不需要 handoff 时正常回答即可。`;
         }
+
+        // Inject project structure if available
+        try {
+            const skillDir = path.join(workspacePath, '.ollama-agent');
+            const skillFile = path.join(skillDir, 'project-skill.md');
+            if (fs.existsSync(skillFile)) {
+                const skillContent = fs.readFileSync(skillFile, 'utf-8');
+                if (skillContent.trim()) {
+                    systemContent += '\n\n## 项目上下文\n' + skillContent;
+                }
+            }
+        } catch { /* ignore */ }
 
         messages.push({ role: 'system', content: systemContent });
 

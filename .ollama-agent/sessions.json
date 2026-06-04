@@ -1,0 +1,108 @@
+{
+  "sessions": [
+    {
+      "id": "mpz6d58hg2sj",
+      "title": "新对话",
+      "messages": [],
+      "model": "qwen3-coder:30b",
+      "createdAt": 1780558175681,
+      "updatedAt": 1780558175681
+    },
+    {
+      "id": "mpybvp5iv5en",
+      "title": "新对话",
+      "messages": [],
+      "model": "qwen3-coder:30b",
+      "createdAt": 1780506973206,
+      "updatedAt": 1780506973206
+    },
+    {
+      "id": "mpyb4ix4rsn6",
+      "title": "新对话",
+      "messages": [],
+      "model": "qwen3-coder:30b",
+      "createdAt": 1780505705416,
+      "updatedAt": 1780505705416
+    },
+    {
+      "id": "mpy9a9liji6e",
+      "title": "分析当前代码作用",
+      "messages": [
+        {
+          "role": "user",
+          "content": "分析当前代码作用",
+          "model": "qwen3-coder:30b",
+          "files": [
+            "c:\\Users\\31266\\.qclaw\\workspace\\ollama-agent\\build.ps1"
+          ]
+        },
+        {
+          "role": "user",
+          "content": "分析当前代码作用",
+          "model": "qwen3-coder:30b"
+        },
+        {
+          "role": "user",
+          "content": "分析当前代码作用",
+          "model": "qwen3-coder:30b",
+          "files": [
+            "c:\\Users\\31266\\.qclaw\\workspace\\ollama-agent\\build.ps1"
+          ]
+        },
+        {
+          "role": "user",
+          "content": "# build.ps1\n$ErrorActionPreference = \"Stop\"\n$Node22 = \"C:\\tools\\node22\"\n\nWrite-Host \"Compile TypeScript...\" -ForegroundColor Cyan\n& \"$Node22\\npx.cmd\" tsc\nif ($LASTEXITCODE -ne 0) { Write-Error \"tsc failed\"; exit 1 }\n\nWrite-Host \"Package VSIX...\" -ForegroundColor Cyan\n& \"$Node22\\npx.cmd\" vsce package\nif ($LASTEXITCODE -ne 0) { Write-Error \"vsce package failed\"; exit 1 }\n\n$vsix = Get-ChildItem \"*.vsix\" | Sort-Object LastWriteTime -Descending | Select-Object -First 1\nWrite-Host \"Package completed: $($vsix.Name)\" -ForegroundColor Green\nWrite-Host \"Installing extension to VS Code...\" -ForegroundColor Cyan\ncode --install-extension $vsix.FullName\nWrite-Host \"Done! Please reload the VS Code window.\" -ForegroundColor Green 上面的代码作用是什么",
+          "model": "qwen3-coder:30b"
+        },
+        {
+          "role": "user",
+          "content": "分析当前代码作用",
+          "model": "deepseek-r1:8b",
+          "files": [
+            "c:\\Users\\31266\\.qclaw\\workspace\\ollama-agent\\build.ps1"
+          ]
+        },
+        {
+          "role": "user",
+          "content": "当前工程的作用是什么",
+          "model": "deepseek-r1:8b"
+        },
+        {
+          "role": "user",
+          "content": "当前工程的作用是什么",
+          "model": "deepseek-r1:8b"
+        },
+        {
+          "role": "user",
+          "content": "我希望在执行这段脚本时，能自动为当前版本增加一个小版本",
+          "model": "deepseek-r1:8b"
+        },
+        {
+          "role": "user",
+          "content": "当前系统模型配置的功能变不可用了",
+          "model": "qwen3-coder:30b"
+        }
+      ],
+      "model": "qwen3-coder:30b",
+      "createdAt": 1780502614038,
+      "updatedAt": 1780505539904
+    },
+    {
+      "id": "mpy8z3s02jfx",
+      "title": "新对话",
+      "messages": [],
+      "model": "qwen3-coder:30b",
+      "createdAt": 1780502093280,
+      "updatedAt": 1780502093280
+    },
+    {
+      "id": "mpy2yt6uuei2",
+      "title": "新对话",
+      "messages": [],
+      "model": "qwen3-coder:30b",
+      "createdAt": 1780492001862,
+      "updatedAt": 1780492001862
+    }
+  ],
+  "activeId": "mpz6d58hg2sj"
+}

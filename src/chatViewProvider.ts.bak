@@ -1,106 +1,96 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ChatViewProvider = void 0;
-const vscode = __importStar(require("vscode"));
-const fileTools_1 = require("./tools/fileTools");
-const terminalTools_1 = require("./tools/terminalTools");
-const fs = __importStar(require("fs"));
-const path = __importStar(require("path"));
-class ChatViewProvider {
-    constructor(_extensionUri, ollamaClient, codebaseIndexer, model, availableModels = [], visionModel = '', _workspaceState) {
-        this._extensionUri = _extensionUri;
-        this.ollamaClient = ollamaClient;
-        this.codebaseIndexer = codebaseIndexer;
-        this._workspaceState = _workspaceState;
-        this._isProcessing = false;
-        this._sessions = [];
-        this._activeSessionId = '';
-        /** Abort controller for the current processing run */
-        this._abortController = null;
-        /** Last user input for refill on stop */
-        this._lastUserInput = '';
-        this._lastUserFiles = [];
-        this._lastUserImages = [];
+import * as vscode from 'vscode';
+import { OllamaClient } from './ollamaClient';
+import { CodebaseIndexer } from './tools/codebaseTools';
+import { FileTools } from './tools/fileTools';
+import { TerminalTools } from './tools/terminalTools';
+import * as fs from 'fs';
+import * as path from 'path';
+
+interface ChatMessage {
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    files?: string[];
+    images?: string[];
+    model?: string;
+}
+
+interface ChatSession {
+    id: string;
+    title: string;
+    messages: ChatMessage[];
+    model: string;
+    createdAt: number;
+    updatedAt: number;
+}
+
+interface ToolCall {
+    tool: string;
+    path?: string;
+    content?: string;
+    command?: string;
+}
+
+export class ChatViewProvider implements vscode.WebviewViewProvider {
+    private _view?: vscode.WebviewView;
+    private fileTools: FileTools;
+    private terminalTools: TerminalTools;
+    private _isProcessing: boolean = false;
+    private _currentModel: string;
+    private _visionModel: string;
+    private _availableModels: string[];
+
+    private _sessions: ChatSession[] = [];
+    private _activeSessionId: string = '';
+
+    /** Abort controller for the current processing run */
+    private _abortController: AbortController | null = null;
+    /** Last user input for refill on stop */
+    private _lastUserInput: string = '';
+    private _lastUserFiles: string[] = [];
+    private _lastUserImages: string[] = [];
+
+    constructor(
+        private readonly _extensionUri: vscode.Uri,
+        private ollamaClient: OllamaClient,
+        private codebaseIndexer: CodebaseIndexer,
+        model: string,
+        availableModels: string[] = [],
+        visionModel: string = ''
+    ) {
         this._currentModel = model;
         this._visionModel = visionModel;
         this._availableModels = availableModels.length > 0 ? availableModels : [model];
-        this.fileTools = new fileTools_1.FileTools();
-        this.terminalTools = new terminalTools_1.TerminalTools();
-        // Persist sessions across reloads via workspaceState
-        if (this._workspaceState) {
-            const saved = this._workspaceState.get('sessions');
-            if (saved && Array.isArray(saved.sessions)) {
-                this._sessions = saved.sessions;
-                this._activeSessionId = saved.activeId || (this._sessions[0]?.id ?? '');
-            }
-        }
-        if (!this._activeSessionId) {
-            this._createNewSession();
-        }
+        this.fileTools = new FileTools();
+        this.terminalTools = new TerminalTools();
+        this._createNewSession();
     }
-    getCurrentModel() { return this._currentModel; }
-    switchModel(model) {
+
+    public getCurrentModel(): string { return this._currentModel; }
+
+    public switchModel(model: string) {
         this._currentModel = model;
         this._view?.webview.postMessage({ type: 'configChanged', textModel: model, visionModel: this._visionModel });
     }
-    switchVisionModel(model) {
+
+    public switchVisionModel(model: string) {
         this._visionModel = model;
         this._view?.webview.postMessage({ type: 'configChanged', textModel: this._currentModel, visionModel: model });
     }
-    updateAvailableModels(models) { this._availableModels = models; }
-    _isVisionModel(modelName) {
+
+    public updateAvailableModels(models: string[]) { this._availableModels = models; }
+
+    private _isVisionModel(modelName: string): boolean {
         return /vl|llava|vision|minicpm-v|qwen.*vl|qwen2\.5-vl|qwen3-vl/i.test(modelName.toLowerCase());
     }
-    addFileFromContext(filePath) {
-        if (!this._view) {
-            return;
-        }
+
+    public addFileFromContext(filePath: string) {
+        if (!this._view) { return; }
         this._view.webview.postMessage({ type: 'filesAdded', files: [filePath] });
         vscode.window.setStatusBarMessage(`📄 ${path.basename(filePath)} 已添加到 Ollama Agent`, 3000);
     }
-    /** Public wrapper for external callers (e.g. extension.ts) */
-    getActiveSession() {
-        return this._getActiveSession();
-    }
-    /** Handle messages forwarded from ChatPanel */
-    async handlePanelMessage(data) {
-        await this._handleWebviewMessage(data);
-    }
-    _createNewSession() {
-        const session = {
+
+    private _createNewSession(): ChatSession {
+        const session: ChatSession = {
             id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
             title: '新对话', messages: [], model: this._currentModel,
             createdAt: Date.now(), updatedAt: Date.now()
@@ -109,108 +99,92 @@ class ChatViewProvider {
         this._activeSessionId = session.id;
         return session;
     }
-    _getActiveSession() {
+
+    private _getActiveSession(): ChatSession | undefined {
         return this._sessions.find(s => s.id === this._activeSessionId);
     }
-    async _handleWebviewMessage(data) {
-        switch (data.type) {
-            case 'sendMessage':
-                if (this._isProcessing) {
-                    this._view?.webview.postMessage({ type: 'addError', error: '正在处理中，请等待完成...' });
-                    return;
-                }
-                await this.handleUserMessage(data.message, data.files, data.images);
-                break;
-            case 'stop':
-                this._doStop();
-                break;
-            case 'clearHistory':
-                this._clearCurrentSession();
-                break;
-            case 'indexProject':
-                await this.indexProject();
-                break;
-            case 'switchModel':
-                vscode.commands.executeCommand('ollamaAgent.switchModel');
-                break;
-            case 'selectModel':
-                this._currentModel = data.model;
-                this._view?.webview.postMessage({ type: 'configChanged', textModel: data.model, visionModel: this._visionModel });
-                break;
-            case 'configureModels':
-                vscode.commands.executeCommand('ollamaAgent.configureModels');
-                break;
-            case 'restartOllama':
-                vscode.commands.executeCommand('ollamaAgent.restartOllama');
-                break;
-            case 'ollamaRestarted':
-                this._view?.webview.postMessage({ type: 'ollamaRestarted', models: data.models || [] });
-                break;
-            case 'ollamaRestartFailed':
-                this._view?.webview.postMessage({ type: 'ollamaRestartFailed' });
-                break;
-            case 'newChat':
-                this._createNewSession();
-                this._view?.webview.postMessage({ type: 'sessionReset', sessionId: this._activeSessionId });
-                break;
-            case 'switchSession':
-                this._activeSessionId = data.sessionId;
-                this._saveSessionsToFile();
-                this._view?.webview.postMessage({ type: 'sessionLoaded', session: this._getActiveSession() });
-                break;
-            case 'deleteSession':
-                this._sessions = this._sessions.filter(s => s.id !== data.sessionId);
-                this._saveSessionsToFile();
-                if (this._activeSessionId === data.sessionId) {
-                    this._createNewSession();
-                    this._view?.webview.postMessage({ type: 'sessionReset', sessionId: this._activeSessionId });
-                }
-                this._view?.webview.postMessage({ type: 'sessionList', sessions: this._sessions.map(s => ({ id: s.id, title: s.title })) });
-                break;
-            case 'requestSessionList':
-                this._view?.webview.postMessage({ type: 'sessionList', sessions: this._sessions.map(s => ({ id: s.id, title: s.title })) });
-                break;
-            case 'readFile':
-                try {
-                    this._view?.webview.postMessage({ type: 'fileContent', path: data.path, name: path.basename(data.path), content: fs.readFileSync(data.path, 'utf-8').slice(0, 50000) });
-                }
-                catch (e) {
-                    this._view?.webview.postMessage({ type: 'addError', error: `读取失败: ${e.message}` });
-                }
-                break;
-        }
-    }
-    _saveSessionsToFile() {
-        try {
-            this._workspaceState?.update('sessions', {
-                sessions: this._sessions,
-                activeId: this._activeSessionId
-            });
-        }
-        catch { /* ignore */ }
-    }
-    resolveWebviewView(webviewView, context, _token) {
+
+    public resolveWebviewView(
+        webviewView: vscode.WebviewView,
+        context: vscode.WebviewViewResolveContext,
+        _token: vscode.CancellationToken
+    ) {
         this._view = webviewView;
         webviewView.webview.options = { enableScripts: true, localResourceRoots: [this._extensionUri] };
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+
         const session = this._getActiveSession();
         if (session && session.messages.length > 0) {
             setTimeout(() => { this._view?.webview.postMessage({ type: 'sessionLoaded', session }); }, 100);
         }
+
         webviewView.webview.onDidReceiveMessage(async (data) => {
-            await this._handleWebviewMessage(data);
+            switch (data.type) {
+                case 'sendMessage':
+                    if (this._isProcessing) {
+                        this._view?.webview.postMessage({ type: 'addError', error: '正在处理中，请等待完成...' });
+                        return;
+                    }
+                    await this.handleUserMessage(data.message, data.files, data.images);
+                    break;
+                case 'stop':
+                    this._doStop();
+                    break;
+                case 'clearHistory':
+                    this._clearCurrentSession();
+                    break;
+                case 'indexProject':
+                    await this.indexProject();
+                    break;
+                case 'switchModel':
+                    vscode.commands.executeCommand('ollamaAgent.switchModel');
+                    break;
+                case 'selectModel':
+                    this._currentModel = data.model;
+                    this._view?.webview.postMessage({ type: 'configChanged', textModel: data.model, visionModel: this._visionModel });
+                    break;
+                case 'configureModels':
+                    vscode.commands.executeCommand('ollamaAgent.configureModels');
+                    break;
+                case 'newChat':
+                    this._createNewSession();
+                    this._view?.webview.postMessage({ type: 'sessionReset', sessionId: this._activeSessionId });
+                    break;
+                case 'switchSession':
+                    this._activeSessionId = data.sessionId;
+                    this._view?.webview.postMessage({ type: 'sessionLoaded', session: this._getActiveSession() });
+                    break;
+                case 'deleteSession':
+                    this._sessions = this._sessions.filter(s => s.id !== data.sessionId);
+                    if (this._activeSessionId === data.sessionId) {
+                        if (this._sessions.length === 0) { this._createNewSession(); }
+                        else { this._activeSessionId = this._sessions[0].id; }
+                    }
+                    this._view?.webview.postMessage({ type: 'sessionList', sessions: this._sessions.map(s => ({ id: s.id, title: s.title })) });
+                    break;
+                case 'requestSessionList':
+                    this._view?.webview.postMessage({ type: 'sessionList', sessions: this._sessions.map(s => ({ id: s.id, title: s.title })) });
+                    break;
+                case 'readFile': {
+                    try {
+                        const content = fs.readFileSync(data.path, 'utf-8');
+                        this._view?.webview.postMessage({ type: 'fileContent', path: data.path, name: path.basename(data.path), content: content.slice(0, 50000) });
+                    } catch (e: any) {
+                        this._view?.webview.postMessage({ type: 'addError', error: `读取文件失败: ${e.message}` });
+                    }
+                    break;
+                }
+            }
         });
     }
-    _clearCurrentSession() {
+
+    private _clearCurrentSession() {
         const session = this._getActiveSession();
-        if (session) {
-            session.messages = [];
-            session.title = '新对话';
-            session.updatedAt = Date.now();
-        }
+        if (session) { session.messages = []; session.title = '新对话'; session.updatedAt = Date.now(); }
     }
+
     /** Stop the current processing and refill input */
-    _doStop() {
+    private _doStop() {
         if (this._abortController) {
             this._abortController.abort();
             this._abortController = null;
@@ -226,61 +200,58 @@ class ChatViewProvider {
             images: this._lastUserImages
         });
     }
-    _selectModel(images) {
-        if (images && images.length > 0 && this._visionModel) {
-            return this._visionModel;
-        }
+
+    private _selectModel(images?: string[]): string {
+        if (images && images.length > 0 && this._visionModel) { return this._visionModel; }
         return this._currentModel;
     }
-    _parseHandoff(response) {
+
+    private _parseHandoff(response: string): { target: 'vision' | 'text'; prompt: string } | null {
         const match = /```handoff\s*\n([\s\S]*?)```/g.exec(response);
-        if (!match) {
-            return null;
-        }
+        if (!match) { return null; }
         try {
             const parsed = JSON.parse(match[1].trim());
-            if (parsed.target && parsed.prompt) {
-                return { target: parsed.target, prompt: parsed.prompt };
-            }
-        }
-        catch { }
+            if (parsed.target && parsed.prompt) { return { target: parsed.target, prompt: parsed.prompt }; }
+        } catch {}
         return null;
     }
-    _isAborted() { return !!this._abortController?.signal.aborted; }
-    async handleUserMessage(message, filePaths, images) {
-        if (!this._view) {
-            return;
-        }
+
+    private _isAborted(): boolean { return !!this._abortController?.signal.aborted; }
+
+    private async handleUserMessage(message: string, filePaths?: string[], images?: string[]) {
+        if (!this._view) { return; }
         const session = this._getActiveSession();
-        if (!session) {
-            return;
-        }
+        if (!session) { return; }
+
         // Save for refill on stop
         this._lastUserInput = message;
         this._lastUserFiles = filePaths || [];
         this._lastUserImages = images || [];
+
         this._isProcessing = true;
         this._abortController = new AbortController();
+
         const hasImages = images && images.length > 0;
         const useModel = this._selectModel(images);
-        const userMsg = { role: 'user', content: message, model: useModel };
-        if (filePaths && filePaths.length > 0) {
-            userMsg.files = filePaths;
-        }
-        if (hasImages) {
-            userMsg.images = images;
-        }
+
+        const userMsg: ChatMessage = { role: 'user', content: message, model: useModel };
+        if (filePaths && filePaths.length > 0) { userMsg.files = filePaths; }
+        if (hasImages) { userMsg.images = images; }
         session.messages.push(userMsg);
+
         if (session.title === '新对话' && message) {
             session.title = message.slice(0, 30) + (message.length > 30 ? '...' : '');
             this._view.webview.postMessage({ type: 'sessionTitleUpdate', sessionId: session.id, title: session.title });
         }
         session.updatedAt = Date.now();
+
         let displayContent = message;
         if (filePaths && filePaths.length > 0) {
             displayContent += '\n📎 ' + filePaths.map(p => path.basename(p)).join(', ');
         }
+
         this._view.webview.postMessage({ type: 'addMessage', message: { role: 'user', content: displayContent } });
+
         // Create primary assistant bubble
         this._view.webview.postMessage({
             type: 'addMessage',
@@ -290,37 +261,41 @@ class ChatViewProvider {
             isRelay: false
         });
         this._view.webview.postMessage({ type: 'setLoading', loading: true, model: useModel });
+
         try {
             let response = await this.processWithAgent(message, filePaths, images, useModel);
-            if (this._isAborted()) {
-                return;
-            }
+
+            if (this._isAborted()) { return; }
+
             // ── Execute tools (card-style) ──
             await this._executeAndDisplayTools(response, useModel);
-            if (this._isAborted()) {
-                return;
-            }
+
+            if (this._isAborted()) { return; }
+
             // ── Model collaboration: handoff ──
             let handoff = this._parseHandoff(response);
             let handoffCount = 0;
             let previousModel = useModel;
             const MAX_HANDOFFS = 3;
+
             while (handoff && handoffCount < MAX_HANDOFFS && !this._isAborted()) {
                 const targetModel = handoff.target === 'vision' ? this._visionModel : this._currentModel;
-                if (!targetModel || targetModel === previousModel) {
-                    break;
-                }
+                if (!targetModel || targetModel === previousModel) { break; }
+
                 const isVisionTarget = handoff.target === 'vision';
+
                 // Strip handoff block
                 response = response.replace(/```handoff\s*\n[\s\S]*?```/g, '').trim();
                 this._view.webview.postMessage({ type: 'updateLastAssistant', content: response });
                 session.messages.push({ role: 'assistant', content: response, model: previousModel });
+
                 // Handoff indicator
                 this._view.webview.postMessage({
                     type: 'addModelIndicator',
                     fromModel: previousModel, toModel: targetModel,
                     indicator: isVisionTarget ? 'vision' : 'text'
                 });
+
                 // RELAY assistant bubble (weakened)
                 this._view.webview.postMessage({
                     type: 'addMessage',
@@ -328,19 +303,26 @@ class ChatViewProvider {
                     modelTag: targetModel, isVision: isVisionTarget, isRelay: true
                 });
                 this._view.webview.postMessage({ type: 'setLoading', loading: true, model: targetModel });
-                const handoffResponse = await this.processWithAgent(handoff.prompt, undefined, isVisionTarget ? images : undefined, targetModel);
-                if (this._isAborted()) {
-                    return;
-                }
+
+                const handoffResponse = await this.processWithAgent(
+                    handoff.prompt, undefined,
+                    isVisionTarget ? images : undefined, targetModel
+                );
+
+                if (this._isAborted()) { return; }
+
                 // Execute tools from the relay response too
                 await this._executeAndDisplayTools(handoffResponse, targetModel);
+
                 session.messages.push({ role: 'assistant', content: handoffResponse, model: targetModel });
                 this._view.webview.postMessage({ type: 'updateLastAssistant', content: handoffResponse });
+
                 response = handoffResponse;
                 previousModel = targetModel;
                 handoff = this._parseHandoff(response);
                 handoffCount++;
             }
+
             // Final update (no handoff)
             if (handoffCount === 0) {
                 // response already updated by _executeAndDisplayTools which strips tool blocks
@@ -348,39 +330,36 @@ class ChatViewProvider {
                 this._view.webview.postMessage({ type: 'updateLastAssistant', content: cleanResponse });
                 session.messages.push({ role: 'assistant', content: cleanResponse, model: useModel });
             }
-        }
-        catch (error) {
-            if (error.name === 'AbortError') {
-                return;
-            }
+        } catch (error: any) {
+            if (error.name === 'AbortError') { return; }
             this._view.webview.postMessage({ type: 'addError', error: error.message || String(error) });
             this._view.webview.postMessage({ type: 'removeLastAssistant' });
-        }
-        finally {
+        } finally {
             this._isProcessing = false;
             this._abortController = null;
             this._view?.webview.postMessage({ type: 'setLoading', loading: false });
         }
     }
+
     /** Strip ```tool...``` blocks from a response string */
-    _stripToolBlocks(response) {
+    private _stripToolBlocks(response: string): string {
         return response.replace(/```tool\s*\n[\s\S]*?```/g, '').trim();
     }
+
     /**
      * Parse and execute tool calls from a model response,
      * sending each result as a tool-card message to the webview.
      * Returns the response with tool blocks stripped.
      */
-    async _executeAndDisplayTools(response, model) {
+    private async _executeAndDisplayTools(response: string, model: string): Promise<void> {
         const toolCalls = this._parseToolCalls(response);
-        if (toolCalls.length === 0) {
-            return;
-        }
+        if (toolCalls.length === 0) { return; }
+
         for (const tc of toolCalls) {
-            if (this._isAborted()) {
-                return;
-            }
+            if (this._isAborted()) { return; }
+
             const toolId = 'tool-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+
             // Send "running" card
             this._view?.webview.postMessage({
                 type: 'toolStatus',
@@ -391,19 +370,20 @@ class ChatViewProvider {
                 status: 'running',
                 model
             });
+
             try {
                 let resultText = '';
                 switch (tc.tool) {
                     case 'create_file':
-                        await this.fileTools.createFile(tc.path, tc.content);
+                        await this.fileTools.createFile(tc.path!, tc.content!);
                         resultText = `✅ 已创建: ${tc.path}`;
                         break;
                     case 'edit_file':
-                        await this.fileTools.editFile(tc.path, tc.content);
+                        await this.fileTools.editFile(tc.path!, tc.content!);
                         resultText = `✅ 已编辑: ${tc.path}`;
                         break;
                     case 'run_command':
-                        const output = await this.terminalTools.executeCommand(tc.command);
+                        const output = await this.terminalTools.executeCommand(tc.command!);
                         resultText = `✅ 已执行: ${tc.command}\n${output}`;
                         break;
                     default:
@@ -414,8 +394,7 @@ class ChatViewProvider {
                     path: tc.path, command: tc.command,
                     status: 'done', result: resultText, model
                 });
-            }
-            catch (e) {
+            } catch (e: any) {
                 this._view?.webview.postMessage({
                     type: 'toolStatus', toolId, tool: tc.tool,
                     path: tc.path, command: tc.command,
@@ -424,24 +403,27 @@ class ChatViewProvider {
             }
         }
     }
-    _parseToolCalls(response) {
-        const results = [];
+
+    private _parseToolCalls(response: string): ToolCall[] {
+        const results: ToolCall[] = [];
         const regex = /```tool\s*\n([\s\S]*?)```/g;
         let match;
         while ((match = regex.exec(response)) !== null) {
             try {
                 const parsed = JSON.parse(match[1].trim());
                 results.push({ tool: parsed.tool, path: parsed.path, content: parsed.content, command: parsed.command });
-            }
-            catch { }
+            } catch {}
         }
         return results;
     }
-    async processWithAgent(message, filePaths, images, useModel) {
+
+    private async processWithAgent(message: string, filePaths?: string[], images?: string[], useModel?: string): Promise<string> {
         const model = useModel || this._currentModel;
-        const messages = [];
+        const messages: any[] = [];
         const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '未打开工作区';
+
         const hasVision = images && images.length > 0 && this._isVisionModel(model);
+
         let systemContent = `你是一个智能编程助手，运行在 VS Code 中。你可以：
 1. 回答编程问题
 2. 创建和编辑文件（返回 JSON 格式的工具调用）
@@ -463,9 +445,11 @@ class ChatViewProvider {
 
 当前工作目录: ${workspacePath}
 请用中文回复。`;
+
         if (hasVision) {
             systemContent += '\n\n用户可能会发送图片，请分析图片内容并结合问题回答。';
         }
+
         if (this._visionModel && this._visionModel !== this._currentModel) {
             systemContent += `\n\n## 模型协作
 当前你是 ${model} 模型。如果用户的需求更适合由另一个模型处理，你可以使用 handoff 机制将任务传递给另一个模型：
@@ -485,19 +469,9 @@ handoff 场景：
 
 不需要 handoff 时正常回答即可。`;
         }
-        // Inject project structure if available
-        try {
-            const skillDir = path.join(workspacePath, '.ollama-agent');
-            const skillFile = path.join(skillDir, 'project-skill.md');
-            if (fs.existsSync(skillFile)) {
-                const skillContent = fs.readFileSync(skillFile, 'utf-8');
-                if (skillContent.trim()) {
-                    systemContent += '\n\n## 项目上下文\n' + skillContent;
-                }
-            }
-        }
-        catch { /* ignore */ }
+
         messages.push({ role: 'system', content: systemContent });
+
         if (filePaths && filePaths.length > 0) {
             for (const fp of filePaths) {
                 try {
@@ -505,72 +479,70 @@ handoff 场景：
                     const fileName = path.basename(fp);
                     messages.push({ role: 'user', content: `[文件: ${fileName}]\n\`\`\`\n${content.slice(0, 30000)}\n\`\`\`` });
                     messages.push({ role: 'assistant', content: `已读取文件 ${fileName}，请问你想对这个文件做什么？` });
-                }
-                catch (e) { }
+                } catch (e) {}
             }
         }
+
         if (hasVision && images) {
             messages.push({ role: 'user', content: message, images: images });
-        }
-        else {
+        } else {
             const session = this._getActiveSession();
             if (session) {
                 for (const msg of session.messages.slice(-10)) {
-                    if (msg.role === 'system') {
-                        continue;
-                    }
-                    const m = { role: msg.role, content: msg.content };
-                    if (msg.images && msg.images.length > 0 && this._isVisionModel(model)) {
-                        m.images = msg.images;
-                    }
+                    if (msg.role === 'system') { continue; }
+                    const m: any = { role: msg.role, content: msg.content };
+                    if (msg.images && msg.images.length > 0 && this._isVisionModel(model)) { m.images = msg.images; }
                     messages.push(m);
                 }
             }
         }
+
         const wantsSearch = /搜索|查找|search|find|哪里|where|代码|相关/i.test(message);
         if (wantsSearch) {
             try {
                 const relevantCode = await this.codebaseIndexer.search(message);
                 if (relevantCode) {
                     const lastUserMsg = messages.filter(m => m.role === 'user').pop();
-                    if (lastUserMsg) {
-                        lastUserMsg.content = `相关代码片段:\n${relevantCode}\n\n用户问题: ${message}`;
-                    }
+                    if (lastUserMsg) { lastUserMsg.content = `相关代码片段:\n${relevantCode}\n\n用户问题: ${message}`; }
                 }
-            }
-            catch (e) { }
+            } catch (e) {}
         }
+
         let fullResponse = '';
-        await this.ollamaClient.chat(model, messages, (chunk) => {
-            if (this._isAborted()) {
-                return;
+        await this.ollamaClient.chat(
+            model, messages,
+            (chunk) => {
+                if (this._isAborted()) { return; }
+                fullResponse += chunk;
+                this._view?.webview.postMessage({ type: 'streamChunk', chunk });
+            },
+            (progress) => {
+                this._view?.webview.postMessage({
+                    type: 'progress', percent: progress.percent,
+                    tokensGenerated: progress.tokensGenerated, tokensTotal: progress.tokensTotal
+                });
             }
-            fullResponse += chunk;
-            this._view?.webview.postMessage({ type: 'streamChunk', chunk });
-        }, (progress) => {
-            this._view?.webview.postMessage({
-                type: 'progress', percent: progress.percent,
-                tokensGenerated: progress.tokensGenerated, tokensTotal: progress.tokensTotal
-            });
-        });
+        );
+
         return fullResponse;
     }
-    async indexProject() {
+
+    private async indexProject() {
         if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-            vscode.window.showWarningMessage('请先打开一个文件夹');
-            return;
+            vscode.window.showWarningMessage('请先打开一个文件夹'); return;
         }
         this._view?.webview.postMessage({ type: 'addMessage', message: { role: 'assistant', content: '⏳ 正在索引项目...' } });
         try {
             await this.codebaseIndexer.indexWorkspace(vscode.workspace.workspaceFolders[0].uri.fsPath);
             this._view?.webview.postMessage({ type: 'addMessage', message: { role: 'assistant', content: '✅ 项目索引完成！' } });
-        }
-        catch (error) {
+        } catch (error: any) {
             this._view?.webview.postMessage({ type: 'addError', error: `索引失败: ${error.message}` });
         }
     }
-    _getHtmlForWebview(webview) {
+
+    private _getHtmlForWebview(webview: vscode.Webview): string {
         const activeSessionId = this._activeSessionId;
+
         return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1245,5 +1217,3 @@ handoff 场景：
 </html>`;
     }
 }
-exports.ChatViewProvider = ChatViewProvider;
-//# sourceMappingURL=chatViewProvider.js.map

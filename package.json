@@ -1,121 +1,125 @@
 {
-  "name": "ollama-agent",
-  "displayName": "Ollama Agent",
-  "description": "Local AI coding agent with Ollama - 支持文件操作、终端执行、项目索引",
-  "version": "1.7.0",
-  "publisher": "local",
-  "engines": {
-    "vscode": "^1.85.0"
-  },
-  "categories": [
-    "Programming Languages",
-    "Machine Learning",
-    "Other"
-  ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "main": "./out/extension.js",
-  "contributes": {
-    "commands": [
-      {
-        "command": "ollamaAgent.openChat",
-        "title": "Open Ollama Agent Chat"
-      },
-      {
-        "command": "ollamaAgent.indexProject",
-        "title": "Index Current Project"
-      },
-      {
-        "command": "ollamaAgent.switchModel",
-        "title": "Switch Ollama Model"
-      },
-      {
-        "command": "ollamaAgent.addFileToContext",
-        "title": "Add to Ollama Agent"
-      },
-      {
-        "command": "ollamaAgent.configureModels",
-        "title": "Configure Ollama Models"
-      }
-    ],
-    "menus": {
-      "editor/context": [
-        {
-          "command": "ollamaAgent.addFileToContext",
-          "when": "resourceScheme == file",
-          "group": "9_cutcopypaste@100"
-        }
-      ],
-      "explorer/context": [
-        {
-          "command": "ollamaAgent.addFileToContext",
-          "when": "resourceScheme == file",
-          "group": "9_cutcopypaste@100"
-        }
-      ],
-      "editor/title/context": [
-        {
-          "command": "ollamaAgent.addFileToContext",
-          "when": "resourceScheme == file",
-          "group": "9_cutcopypaste@100"
-        }
-      ]
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "ollama-agent",
-          "title": "Ollama Agent",
-          "icon": "resources/icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "ollama-agent": [
-        {
-          "type": "webview",
-          "id": "ollamaAgent.chatView",
-          "name": "Chat"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "Ollama Agent",
-      "properties": {
-        "ollamaAgent.model": {
-          "type": "string",
-          "default": "qwen3-coder:30b",
-          "description": "Ollama model to use"
-        },
-        "ollamaAgent.apiBase": {
-          "type": "string",
-          "default": "http://localhost:11434",
-          "description": "Ollama API base URL"
-        },
-        "ollamaAgent.embeddingModel": {
-          "type": "string",
-          "default": "nomic-embed-text",
-          "description": "Model for codebase indexing"
-        },
-        "ollamaAgent.visionModel": {
-          "type": "string",
-          "default": "",
-          "description": "Vision model for image analysis (e.g. qwen2.5-vl:7b, llava:13b). Leave empty to use text model for all."
-        }
-      }
-    }
-  },
-  "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "package": "vsce package"
-  },
-  "devDependencies": {
-    "@types/node": "^20.10.0",
-    "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.9.1",
-    "typescript": "^5.3.0"
-  }
+    "name":  "ollama-agent",
+    "displayName":  "Ollama Agent",
+    "description":  "Local AI coding agent with Ollama - 支持文件操作、终端执行、项目索引、服务重启",
+    "version":  "1.9.2",
+    "publisher":  "local",
+    "engines":  {
+                    "vscode":  "^1.85.0"
+                },
+    "categories":  [
+                       "Programming Languages",
+                       "Machine Learning",
+                       "Other"
+                   ],
+    "activationEvents":  [
+                             "onStartupFinished"
+                         ],
+    "main":  "./out/extension.js",
+    "contributes":  {
+                        "commands":  [
+                                         {
+                                             "command":  "ollamaAgent.openChat",
+                                             "title":  "Open Ollama Agent Chat"
+                                         },
+                                         {
+                                             "command":  "ollamaAgent.indexProject",
+                                             "title":  "Index Current Project"
+                                         },
+                                         {
+                                             "command":  "ollamaAgent.switchModel",
+                                             "title":  "Switch Ollama Model"
+                                         },
+                                         {
+                                             "command":  "ollamaAgent.addFileToContext",
+                                             "title":  "Add to Ollama Agent"
+                                         },
+                                         {
+                                             "command":  "ollamaAgent.configureModels",
+                                             "title":  "Configure Ollama Models"
+                                         },
+                                         {
+                                             "command":  "ollamaAgent.restartOllama",
+                                             "title":  "Restart Ollama Service"
+                                         }
+                                     ],
+                        "menus":  {
+                                      "editor/context":  [
+                                                             {
+                                                                 "command":  "ollamaAgent.addFileToContext",
+                                                                 "when":  "resourceScheme == file",
+                                                                 "group":  "9_cutcopypaste@100"
+                                                             }
+                                                         ],
+                                      "explorer/context":  [
+                                                               {
+                                                                   "command":  "ollamaAgent.addFileToContext",
+                                                                   "when":  "resourceScheme == file",
+                                                                   "group":  "9_cutcopypaste@100"
+                                                               }
+                                                           ],
+                                      "editor/title/context":  [
+                                                                   {
+                                                                       "command":  "ollamaAgent.addFileToContext",
+                                                                       "when":  "resourceScheme == file",
+                                                                       "group":  "9_cutcopypaste@100"
+                                                                   }
+                                                               ]
+                                  },
+                        "viewsContainers":  {
+                                                "activitybar":  [
+                                                                    {
+                                                                        "id":  "ollama-agent",
+                                                                        "title":  "Ollama Agent",
+                                                                        "icon":  "resources/icon.svg"
+                                                                    }
+                                                                ]
+                                            },
+                        "views":  {
+                                      "ollama-agent":  [
+                                                           {
+                                                               "type":  "webview",
+                                                               "id":  "ollamaAgent.chatView",
+                                                               "name":  "Chat"
+                                                           }
+                                                       ]
+                                  },
+                        "configuration":  {
+                                              "title":  "Ollama Agent",
+                                              "properties":  {
+                                                                 "ollamaAgent.model":  {
+                                                                                           "type":  "string",
+                                                                                           "default":  "qwen3-coder:30b",
+                                                                                           "description":  "Ollama model to use"
+                                                                                       },
+                                                                 "ollamaAgent.apiBase":  {
+                                                                                             "type":  "string",
+                                                                                             "default":  "http://localhost:11434",
+                                                                                             "description":  "Ollama API base URL"
+                                                                                         },
+                                                                 "ollamaAgent.embeddingModel":  {
+                                                                                                    "type":  "string",
+                                                                                                    "default":  "nomic-embed-text",
+                                                                                                    "description":  "Model for codebase indexing"
+                                                                                                },
+                                                                 "ollamaAgent.visionModel":  {
+                                                                                                 "type":  "string",
+                                                                                                 "default":  "",
+                                                                                                 "description":  "Vision model for image analysis (e.g. qwen2.5-vl:7b, llava:13b). Leave empty to use text model for all."
+                                                                                             }
+                                                             }
+                                          }
+                    },
+    "scripts":  {
+                    "vscode:prepublish":  "npm run compile",
+                    "compile":  "tsc -p ./",
+                    "watch":  "tsc -watch -p ./",
+                    "package":  "vsce package"
+                },
+    "devDependencies":  {
+                            "@types/node":  "^20.10.0",
+                            "@types/vscode":  "^1.85.0",
+                            "@vscode/vsce":  "^3.9.1",
+                            "typescript":  "^5.3.0"
+                        }
 }
